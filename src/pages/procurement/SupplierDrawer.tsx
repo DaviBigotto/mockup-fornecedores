@@ -107,6 +107,57 @@ export const SupplierDrawer: React.FC = () => {
       .catch(() => setLoading(false));
   }, [selectedSupplierId, dataVersion]);
 
+  const handleApproveHomologation = async () => {
+    if (!supplier) return;
+    try {
+      const actorName = currentUser?.name || 'Comprador Corporativo';
+      const res = await fetch(`/api/suppliers/${supplier.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-name': actorName,
+        },
+        body: JSON.stringify({
+          status: 'Homologado',
+          documentStatus: 'Válido',
+        }),
+      });
+
+      if (!res.ok) throw new Error();
+
+      showToast(`Fornecedor ${supplier.tradeName} homologado com sucesso!`, 'success');
+      triggerRefresh();
+      closeSupplierDrawer();
+    } catch {
+      showToast('Erro ao homologar fornecedor.', 'error');
+    }
+  };
+
+  const handleRequestAdjustment = async () => {
+    if (!supplier) return;
+    try {
+      const actorName = currentUser?.name || 'Comprador Corporativo';
+      const res = await fetch(`/api/suppliers/${supplier.id}`, {
+        method: 'PUT',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-user-name': actorName,
+        },
+        body: JSON.stringify({
+          status: 'Ajuste solicitado',
+        }),
+      });
+
+      if (!res.ok) throw new Error();
+
+      showToast(`Ajuste solicitado para ${supplier.tradeName}.`, 'info');
+      triggerRefresh();
+      closeSupplierDrawer();
+    } catch {
+      showToast('Erro ao solicitar ajuste.', 'error');
+    }
+  };
+
   if (!selectedSupplierId) return null;
 
   const erpRegistrations =
@@ -592,32 +643,56 @@ export const SupplierDrawer: React.FC = () => {
         </div>
 
         {/* Rodapé do Drawer */}
-        <div className="drawer-footer">
+        <div className="drawer-footer" style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 10, flexWrap: 'wrap' }}>
           <button type="button" className="btn btn-secondary" onClick={closeSupplierDrawer}>
             Fechar
           </button>
 
-          {isCadastro ? (
-            <button
-              type="button"
-              className="btn btn-secondary"
-              onClick={() => showToast('Consulta de sincronização ao ERP da investida efetuada com sucesso.', 'info')}
-              style={{ color: 'var(--color-primary)' }}
-            >
-              <RefreshCw size={14} /> Consultar Retorno ERP
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="btn btn-primary"
-              onClick={() => {
-                closeSupplierDrawer();
-                openAwardModal(supplier?.id);
-              }}
-            >
-              <Award size={16} /> Registrar Fornecedor Premiado
-            </button>
-          )}
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {!isCadastro && supplier?.status !== 'Homologado' && (
+              <>
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleRequestAdjustment}
+                  style={{ color: '#D97706', borderColor: '#FCD34D' }}
+                >
+                  <AlertTriangle size={14} /> Solicitar Ajuste
+                </button>
+
+                <button
+                  type="button"
+                  className="btn btn-secondary"
+                  onClick={handleApproveHomologation}
+                  style={{ color: '#059669', borderColor: '#A7F3D0', fontWeight: 700 }}
+                >
+                  <CheckCircle2 size={14} /> Homologar Fornecedor
+                </button>
+              </>
+            )}
+
+            {isCadastro ? (
+              <button
+                type="button"
+                className="btn btn-secondary"
+                onClick={() => showToast('Consulta de sincronização ao ERP da investida efetuada com sucesso.', 'info')}
+                style={{ color: 'var(--color-primary)' }}
+              >
+                <RefreshCw size={14} /> Consultar Retorno ERP
+              </button>
+            ) : (
+              <button
+                type="button"
+                className="btn btn-primary"
+                onClick={() => {
+                  closeSupplierDrawer();
+                  openAwardModal(supplier?.id);
+                }}
+              >
+                <Award size={16} /> Registrar Fornecedor Premiado
+              </button>
+            )}
+          </div>
         </div>
       </div>
     </div>
