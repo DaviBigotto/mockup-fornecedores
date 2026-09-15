@@ -24,6 +24,7 @@ import {
 } from './mockData.js';
 import { buildDecisionFlow } from '../../src/services/decisionMatrix.js';
 import { getPool } from './client.js';
+import bcrypt from 'bcryptjs';
 
 // Estado em memória (fallback e cache de sessão)
 let usersStore: (User & { passwordHash?: string })[] = [];
@@ -87,6 +88,7 @@ function rowToSupplier(row: any): Supplier {
     commercialReferences: Array.isArray(row.commercial_references) ? row.commercial_references : (typeof row.commercial_references === 'string' ? JSON.parse(row.commercial_references) : []),
     documents: Array.isArray(row.documents) ? row.documents : (typeof row.documents === 'string' ? JSON.parse(row.documents) : []),
     pendingItems: Array.isArray(row.pending_items) ? row.pending_items : (typeof row.pending_items === 'string' ? JSON.parse(row.pending_items) : []),
+    createdBy: row.created_by || undefined,
     createdAt: row.created_at ? new Date(row.created_at).toISOString() : new Date().toISOString(),
     updatedAt: row.updated_at ? new Date(row.updated_at).toISOString() : new Date().toISOString(),
   };
@@ -270,6 +272,7 @@ export const repository = {
       commercialReferences: data.commercialReferences || [],
       documents: data.documents || [],
       pendingItems: [],
+      createdBy: data.createdBy,
       createdAt: now,
       updatedAt: now,
     };
@@ -285,12 +288,12 @@ export const repository = {
             tax_classification, main_category, categories, subcategories, products_services, regions, states,
             business_units, service_capacity, market_experience_years, estimated_employees, status, erp_status,
             document_status, erp_code, completion_percentage, current_step, draft_data, contacts, address,
-            bank_accounts, shareholders, commercial_references, documents, pending_items, created_at, updated_at
+            bank_accounts, shareholders, commercial_references, documents, pending_items, created_by, created_at, updated_at
           ) VALUES (
             $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16,
             $17::jsonb, $18::jsonb, $19, $20::jsonb, $21::jsonb, $22::jsonb, $23, $24, $25, $26,
             $27, $28, $29, $30, $31, $32::jsonb, $33::jsonb, $34::jsonb, $35::jsonb, $36::jsonb,
-            $37::jsonb, $38::jsonb, $39::jsonb, $40, $41
+            $37::jsonb, $38::jsonb, $39::jsonb, $40, $41, $42
           )`,
           [
             newSupplier.id,
@@ -332,6 +335,7 @@ export const repository = {
             JSON.stringify(newSupplier.commercialReferences || []),
             JSON.stringify(newSupplier.documents || []),
             JSON.stringify(newSupplier.pendingItems || []),
+            newSupplier.createdBy || null,
             newSupplier.createdAt,
             newSupplier.updatedAt,
           ]
@@ -422,7 +426,8 @@ export const repository = {
             commercial_references = COALESCE($36::jsonb, commercial_references),
             documents = COALESCE($37::jsonb, documents),
             pending_items = COALESCE($38::jsonb, pending_items),
-            updated_at = $39
+            created_by = COALESCE($39, created_by),
+            updated_at = $40
           WHERE id = $1`,
           [
             id,
@@ -463,6 +468,7 @@ export const repository = {
             updates.commercialReferences ? JSON.stringify(updates.commercialReferences) : null,
             updates.documents ? JSON.stringify(updates.documents) : null,
             updates.pendingItems ? JSON.stringify(updates.pendingItems) : null,
+            updates.createdBy || null,
             now,
           ]
         );
@@ -1248,7 +1254,8 @@ export const repository = {
   }): Promise<User> {
     const cleanEmail = data.email.trim().toLowerCase();
     const newId = `u-${Date.now()}-${Math.random().toString(36).substr(2, 4)}`;
-    const pwd = data.password || '123456';
+    const plainPwd = data.password || '123456';
+    const hashedPwd = bcrypt.hashSync(plainPwd, 10);
 
     const newUser: User & { passwordHash?: string } = {
       id: newId,
@@ -1256,7 +1263,7 @@ export const repository = {
       name: data.name.trim(),
       role: data.role,
       companyName: data.companyName?.trim() || undefined,
-      passwordHash: pwd,
+      passwordHash: hashedPwd,
     };
 
     const pool = getPool();
@@ -1267,7 +1274,7 @@ export const repository = {
            VALUES ($1, $2, $3, $4, $5, $6)
            ON CONFLICT (email) DO UPDATE 
            SET name = EXCLUDED.name, role = EXCLUDED.role, company_name = EXCLUDED.company_name, password_hash = EXCLUDED.password_hash`,
-          [newUser.id, newUser.email, newUser.name, newUser.role, newUser.companyName || null, pwd]
+          [newUser.id, newUser.email, newUser.name, newUser.role, newUser.companyName || null, hashedPwd]
         );
       } catch (err: any) {
         console.warn('[DB] Erro ao salvar usuário no Neon:', err.message);
@@ -1294,8 +1301,31 @@ export const repository = {
     const user = await this.getUserByEmail(email);
     if (!user) return null;
 
-    if (user.passwordHash && user.passwordHash !== password) {
-      return null;
+    if (user.passwordHash) {
+      const isBcrypt = user.passwordHash.startsWith('$2a$') || 
+                       user.passwordHash.startsWith('$2b$') || 
+                       user.passwordHash.startsWith('$2y$');
+
+      if (isBcrypt) {
+        const isMatch = bcrypt.compareSync(password, user.passwordHash);
+        if (!isMatch) return null;
+      } else {
+        // Compatibilidade total com senhas legadas em texto puro
+        if (user.passwordHash !== password) {
+          return null;
+        }
+        // Migração automática e transparente para hash seguro no banco
+        try {
+          const upgradedHash = bcrypt.hashSync(password, 10);
+          user.passwordHash = upgradedHash;
+          const pool = getPool();
+          if (pool) {
+            await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [upgradedHash, user.id]);
+          }
+        } catch (e: any) {
+          console.warn('[AUTH] Falha ao migrar senha legada para hash:', e.message);
+        }
+      }
     }
 
     return {

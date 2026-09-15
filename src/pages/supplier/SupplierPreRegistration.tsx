@@ -37,16 +37,18 @@ export const SupplierPreRegistration: React.FC = () => {
     setLoading(true);
 
     try {
+      const userEmail = (currentUser?.email || email).toLowerCase().trim();
       const payload = {
         cnpj,
         corporateName,
         tradeName: tradeName || corporateName,
+        createdBy: userEmail,
         contacts: [
           {
             id: `c-${Date.now()}`,
             name: contactName,
             role: 'Representante Legal',
-            email,
+            email: userEmail,
             phone,
             isPrimary: true,
           },

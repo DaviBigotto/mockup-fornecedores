@@ -1,6 +1,7 @@
 import pg from 'pg';
 const { Pool } = pg;
 import dotenv from 'dotenv';
+import bcrypt from 'bcryptjs';
 import { DEMO_USERS } from '../server/db/mockData.js';
 
 dotenv.config();
@@ -99,10 +100,11 @@ export async function seedCleanDatabase(targetPool: pg.Pool = pool) {
       },
     ];
 
+    const defaultHash = bcrypt.hashSync('123456', 10);
     for (const u of demoUsers) {
       await client.query(
-        `INSERT INTO users (id, email, name, role, company_name, password_hash) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name`,
-        [u.id, u.email, u.name, u.role, u.companyName, '123456']
+        `INSERT INTO users (id, email, name, role, company_name, password_hash) VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (email) DO UPDATE SET name = EXCLUDED.name, password_hash = EXCLUDED.password_hash`,
+        [u.id, u.email, u.name, u.role, u.companyName, defaultHash]
       );
     }
 

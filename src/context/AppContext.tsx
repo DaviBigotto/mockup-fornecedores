@@ -154,12 +154,24 @@ export const AppProvider: React.FC<{ children: React.ReactNode }> = ({ children 
   // Sincroniza fornecedor ativo do portal se logado como fornecedor
   useEffect(() => {
     if (currentUser?.role === 'fornecedor') {
+      const userEmail = currentUser.email?.toLowerCase().trim();
       fetch('/api/suppliers')
         .then((res) => res.json())
         .then((data: any[]) => {
           if (Array.isArray(data) && data.length > 0) {
-            const matched = data.find((s) => s.contacts?.some((c: any) => c.email?.toLowerCase() === currentUser.email?.toLowerCase()));
-            setActiveSupplierId(matched ? matched.id : data[0].id);
+            const matched = data.find(
+              (s) =>
+                s.createdBy?.toLowerCase().trim() === userEmail ||
+                s.contacts?.some((c: any) => c.email?.toLowerCase().trim() === userEmail)
+            );
+            if (matched) {
+              setActiveSupplierId(matched.id);
+            } else if (userEmail === 'fornecedor@demo.com') {
+              setActiveSupplierId(data[0].id);
+            } else {
+              // Se usuário não tiver nenhum fornecedor ainda, não força o do outro
+              setActiveSupplierId(data[0]?.createdBy ? '' : data[0].id);
+            }
           } else {
             setActiveSupplierId('');
           }

@@ -215,6 +215,7 @@ export interface Supplier {
   documents?: SupplierDocument[];
   pendingItems?: SupplierPendingItem[];
 
+  createdBy?: string;
   createdAt: string;
   updatedAt: string;
 }

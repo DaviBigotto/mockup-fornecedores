@@ -60,7 +60,7 @@ const AVAILABLE_UNIDADES = [
 ];
 
 export const SupplierWizard: React.FC = () => {
-  const { showToast, triggerRefresh, setActiveNav, activeSupplierId, dataVersion } = useApp();
+  const { showToast, triggerRefresh, setActiveNav, activeSupplierId, dataVersion, currentUser } = useApp();
   const [currentStep, setCurrentStep] = useState(1);
   const [supplier, setSupplier] = useState<Supplier | null>(null);
   const [loading, setLoading] = useState(true);
@@ -160,23 +160,36 @@ export const SupplierWizard: React.FC = () => {
         if (!supData) {
           const resAll = await fetch('/api/suppliers');
           if (resAll.ok) {
-            const list = await resAll.json();
+            const list: Supplier[] = await resAll.json();
             if (Array.isArray(list) && list.length > 0) {
-              supData = list[0];
+              const userEmail = currentUser?.email?.toLowerCase().trim();
+              const matched = userEmail
+                ? list.find(
+                    (s) =>
+                      s.createdBy?.toLowerCase().trim() === userEmail ||
+                      s.contacts?.some((c) => c.email?.toLowerCase().trim() === userEmail)
+                  )
+                : null;
+              supData = matched || (userEmail === 'fornecedor@demo.com' ? list[0] : (list[0]?.createdBy ? null : list[0]));
             }
           }
         }
 
         setSupplier(supData);
         if (supData) {
+          if (supData.currentStep && supData.currentStep >= 1 && supData.currentStep <= 8) {
+            setCurrentStep(supData.currentStep);
+          }
+
           const contact = supData.contacts?.[0];
           const addr = supData.address;
           const bank = supData.bankAccounts?.[0];
+          const draft = supData.draftData || {};
 
           setFormData({
             cnpj: supData.cnpj || '',
             corporateName: supData.corporateName || '',
-            tradeName: supData.tradeName || '',
+            tradeName: supData.tradeName || supData.corporateName || '',
             legalNature: supData.legalNature || '206-2 - Sociedade Empresária Limitada',
             stateRegistration: supData.stateRegistration || '',
             municipalRegistration: supData.municipalRegistration || '',
@@ -189,9 +202,9 @@ export const SupplierWizard: React.FC = () => {
             ibsCbsContributor: supData.ibsCbsContributor !== false,
             taxClassification: supData.taxClassification || '',
 
-            contactName: contact?.name || '',
-            contactRole: contact?.role || '',
-            contactEmail: contact?.email || '',
+            contactName: contact?.name || currentUser?.name || '',
+            contactRole: contact?.role || 'Representante Legal',
+            contactEmail: contact?.email || currentUser?.email || '',
             contactPhone: contact?.phone || '',
 
             zipCode: addr?.zipCode || '',
@@ -203,18 +216,18 @@ export const SupplierWizard: React.FC = () => {
             state: addr?.state || 'SP',
 
             mainCategory: supData.mainCategory || 'Tecnologia',
-            categories: supData.categories || ['Tecnologia'],
+            categories: supData.categories?.length ? supData.categories : ['Tecnologia'],
             subcategories: supData.subcategories || [],
             productsServices: supData.productsServices || '',
-            regions: supData.regions || ['Sudeste'],
-            states: supData.states || ['SP'],
-            businessUnits: supData.businessUnits || ['Unidade Corporativa SP'],
+            regions: supData.regions?.length ? supData.regions : ['Sudeste'],
+            states: supData.states?.length ? supData.states : ['SP'],
+            businessUnits: supData.businessUnits?.length ? supData.businessUnits : ['Unidade Corporativa SP'],
             serviceCapacity: supData.serviceCapacity || '',
-            marketExperienceYears: supData.marketExperienceYears || 5,
-            estimatedEmployees: supData.estimatedEmployees || 25,
+            marketExperienceYears: supData.marketExperienceYears ?? 5,
+            estimatedEmployees: supData.estimatedEmployees ?? 25,
 
-            withholdingRetencao: 'Padrão com retenção de ISS no município do tomador',
-            optanteCprb: false,
+            withholdingRetencao: draft.withholdingRetencao || 'Padrão com retenção de ISS no município do tomador',
+            optanteCprb: !!draft.optanteCprb,
 
             bankName: bank?.bankName || 'Banco Itaú Unibanco S.A.',
             agency: bank?.agency || '',
@@ -238,7 +251,7 @@ export const SupplierWizard: React.FC = () => {
     };
 
     fetchSupplier();
-  }, [activeSupplierId, dataVersion]);
+  }, [activeSupplierId, dataVersion, currentUser]);
 
 
   const totalEquity = formData.shareholders.reduce((acc, s) => acc + (Number(s.equityPercentage) || 0), 0);
@@ -333,88 +346,131 @@ export const SupplierWizard: React.FC = () => {
     });
   };
 
-  const handleSaveDraft = async () => {
+  const buildSupplierPayload = (
+    stepNum: number,
+    statusOverride?: Supplier['status'],
+    completionOverride?: number
+  ): Partial<Supplier> => {
+    const calcPercentage =
+      completionOverride !== undefined
+        ? completionOverride
+        : Math.min(100, Math.max(supplier?.completionPercentage || 15, Math.round((stepNum / 8) * 100)));
+
+    let finalStatus = statusOverride;
+    if (!finalStatus) {
+      if (supplier?.status === 'Pré-cadastro' && stepNum > 1) {
+        finalStatus = 'Em preenchimento';
+      } else {
+        finalStatus = supplier?.status || 'Em preenchimento';
+      }
+    }
+
+    return {
+      cnpj: formData.cnpj,
+      corporateName: formData.corporateName,
+      tradeName: formData.tradeName || formData.corporateName,
+      legalNature: formData.legalNature,
+      stateRegistration: formData.stateRegistration,
+      municipalRegistration: formData.municipalRegistration,
+      mainCnae: formData.mainCnae,
+      openingDate: formData.openingDate,
+      companySize: formData.companySize,
+      taxRegime: formData.taxRegime,
+      simplesNacional: formData.simplesNacional,
+      ibsCbsRegime: formData.ibsCbsRegime,
+      ibsCbsContributor: formData.ibsCbsContributor,
+      taxClassification: formData.taxClassification,
+      mainCategory: formData.mainCategory,
+      categories: formData.categories,
+      subcategories: formData.subcategories,
+      productsServices: formData.productsServices,
+      regions: formData.regions,
+      states: formData.states,
+      businessUnits: formData.businessUnits,
+      serviceCapacity: formData.serviceCapacity,
+      marketExperienceYears: Number(formData.marketExperienceYears) || 0,
+      estimatedEmployees: Number(formData.estimatedEmployees) || 0,
+      currentStep: stepNum,
+      completionPercentage: calcPercentage,
+      status: finalStatus,
+      contacts: [
+        {
+          id: supplier?.contacts?.[0]?.id || `c-${Date.now()}`,
+          name: formData.contactName || currentUser?.name || 'Representante Legal',
+          role: formData.contactRole || 'Representante Legal',
+          email: formData.contactEmail || currentUser?.email || '',
+          phone: formData.contactPhone || '',
+          isPrimary: true,
+        },
+      ],
+      address: {
+        zipCode: formData.zipCode,
+        street: formData.street,
+        number: formData.number,
+        complement: formData.complement,
+        neighborhood: formData.neighborhood,
+        city: formData.city,
+        state: formData.state,
+      },
+      bankAccounts: [
+        {
+          bankName: formData.bankName,
+          agency: formData.agency,
+          accountNumber: formData.accountNumber,
+          accountDigit: formData.accountDigit,
+          accountType: formData.accountType,
+          accountHolder: formData.accountHolder || formData.corporateName,
+          holderTaxId: formData.holderTaxId || formData.cnpj,
+          pixKey: formData.pixKey,
+          pixKeyType: formData.pixKeyType,
+        },
+      ],
+      shareholders: formData.shareholders,
+      commercialReferences: formData.commercialReferences,
+      draftData: {
+        withholdingRetencao: formData.withholdingRetencao,
+        optanteCprb: formData.optanteCprb,
+      },
+    };
+  };
+
+  const saveToServer = async (payload: Partial<Supplier>, showToastMessage = false) => {
+    if (!supplier?.id) return;
     setSaving(true);
     try {
-      const payload: Partial<Supplier> = {
-        cnpj: formData.cnpj,
-        corporateName: formData.corporateName,
-        tradeName: formData.tradeName,
-        legalNature: formData.legalNature,
-        stateRegistration: formData.stateRegistration,
-        municipalRegistration: formData.municipalRegistration,
-        mainCnae: formData.mainCnae,
-        openingDate: formData.openingDate,
-        companySize: formData.companySize,
-        taxRegime: formData.taxRegime,
-        simplesNacional: formData.simplesNacional,
-        ibsCbsRegime: formData.ibsCbsRegime,
-        ibsCbsContributor: formData.ibsCbsContributor,
-        taxClassification: formData.taxClassification,
-        mainCategory: formData.mainCategory,
-        categories: formData.categories,
-        regions: formData.regions,
-        businessUnits: formData.businessUnits,
-        serviceCapacity: formData.serviceCapacity,
-        marketExperienceYears: formData.marketExperienceYears,
-        estimatedEmployees: formData.estimatedEmployees,
-        currentStep: currentStep,
-        contacts: [
-          {
-            id: 'c-01',
-            name: formData.contactName,
-            role: formData.contactRole,
-            email: formData.contactEmail,
-            phone: formData.contactPhone,
-            isPrimary: true,
-          },
-        ],
-        address: {
-          zipCode: formData.zipCode,
-          street: formData.street,
-          number: formData.number,
-          complement: formData.complement,
-          neighborhood: formData.neighborhood,
-          city: formData.city,
-          state: formData.state,
-        },
-        bankAccounts: [
-          {
-            bankName: formData.bankName,
-            agency: formData.agency,
-            accountNumber: formData.accountNumber,
-            accountDigit: formData.accountDigit,
-            accountType: formData.accountType,
-            accountHolder: formData.accountHolder,
-            holderTaxId: formData.holderTaxId,
-            pixKey: formData.pixKey,
-            pixKeyType: formData.pixKeyType,
-          },
-        ],
-        shareholders: formData.shareholders,
-        commercialReferences: formData.commercialReferences,
-      };
-
-      if (!supplier?.id) {
-        showToast('Nenhum fornecedor selecionado para salvar.', 'error');
-        return;
-      }
-
       const userName = currentUser?.name || 'Fornecedor';
-
-      await fetch(`/api/suppliers/${supplier.id}`, {
+      const res = await fetch(`/api/suppliers/${supplier.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'x-user-name': userName },
         body: JSON.stringify(payload),
       });
-
-      showToast('Rascunho salvo com sucesso! Você pode continuar a qualquer momento.', 'success');
-      triggerRefresh();
+      if (res.ok) {
+        const updated = await res.json();
+        setSupplier(updated);
+        if (showToastMessage) {
+          showToast('Progresso salvo com sucesso! Você pode continuar a qualquer momento.', 'success');
+        }
+        triggerRefresh();
+      }
     } catch {
-      showToast('Erro ao salvar rascunho.', 'error');
+      if (showToastMessage) {
+        showToast('Erro ao salvar dados cadastrais.', 'error');
+      }
     } finally {
       setSaving(false);
     }
+  };
+
+  const handleSaveDraft = async () => {
+    const payload = buildSupplierPayload(currentStep, supplier?.status === 'Pré-cadastro' ? 'Em preenchimento' : undefined);
+    await saveToServer(payload, true);
+  };
+
+  const handleStepTransition = async (targetStep: number) => {
+    const boundedStep = Math.max(1, Math.min(8, targetStep));
+    setCurrentStep(boundedStep);
+    const payload = buildSupplierPayload(boundedStep);
+    await saveToServer(payload, false);
   };
 
   const handleFinalSubmit = async () => {
@@ -426,22 +482,22 @@ export const SupplierWizard: React.FC = () => {
     setSaving(true);
     try {
       const userName = currentUser?.name || 'Fornecedor';
+      const payload = buildSupplierPayload(8, 'Enviado', 100);
+      payload.documentStatus = (supplier.documents && supplier.documents.length > 0) ? 'Em validação' : 'Enviado';
 
-      await fetch(`/api/suppliers/${supplier.id}`, {
+      const res = await fetch(`/api/suppliers/${supplier.id}`, {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json', 'x-user-name': userName },
-        body: JSON.stringify({
-          status: 'Enviado',
-          completionPercentage: 100,
-          currentStep: 8,
-        }),
+        body: JSON.stringify(payload),
       });
 
-      showToast('Cadastro submetido com sucesso para análise e validação!', 'success');
+      if (!res.ok) throw new Error();
+
+      showToast('Cadastro submetido com sucesso para análise e homologação!', 'success');
       triggerRefresh();
       setActiveNav('supplier-dashboard');
     } catch {
-      showToast('Erro ao enviar cadastro.', 'error');
+      showToast('Erro ao submeter cadastro.', 'error');
     } finally {
       setSaving(false);
     }
@@ -512,7 +568,7 @@ export const SupplierWizard: React.FC = () => {
               <button
                 key={item.step}
                 type="button"
-                onClick={() => setCurrentStep(item.step)}
+                onClick={() => handleStepTransition(item.step)}
                 style={{
                   display: 'flex',
                   flexDirection: 'column',
@@ -1522,7 +1578,7 @@ export const SupplierWizard: React.FC = () => {
           <button
             type="button"
             className="btn btn-secondary"
-            onClick={() => setCurrentStep((prev) => Math.max(1, prev - 1))}
+            onClick={() => handleStepTransition(currentStep - 1)}
             disabled={currentStep === 1}
           >
             <ArrowLeft size={15} />
@@ -1537,7 +1593,7 @@ export const SupplierWizard: React.FC = () => {
             <button
               type="button"
               className="btn btn-primary"
-              onClick={() => setCurrentStep((prev) => Math.min(8, prev + 1))}
+              onClick={() => handleStepTransition(currentStep + 1)}
             >
               Próxima Etapa
               <ArrowRight size={15} />
